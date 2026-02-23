@@ -27,7 +27,9 @@ let allowedOrigins;
 if (process.env.FRONTEND_URL) {
   allowedOrigins = process.env.FRONTEND_URL.split(',').map(url => url.trim());
 } else if (process.env.NODE_ENV === 'production') {
-  allowedOrigins = [];
+  allowedOrigins = [
+    'https://careerprefilling1.netlify.app'
+  ];
 } else {
   // Development: Allow common localhost ports
   allowedOrigins = [
