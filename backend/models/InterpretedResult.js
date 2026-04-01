@@ -95,6 +95,16 @@ const InterpretedResult = sequelize.define('InterpretedResult', {
     allowNull: true,
     comment: 'Cached RIASEC report with scores and report text'
   },
+  interpretation_cache_key: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: 'Cache key for interpretation lookups'
+  },
+  cached_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: 'Timestamp when interpretation was cached'
+  },
   created_at: {
     type: DataTypes.DATE,
     allowNull: false,

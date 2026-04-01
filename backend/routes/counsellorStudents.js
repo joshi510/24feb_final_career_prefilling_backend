@@ -3,6 +3,24 @@ const router = express.Router();
 const { Op } = require('sequelize');
 const { User, UserRole, Student, TestAttempt, TestStatus, InterpretedResult, Score } = require('../models');
 const { getCurrentUser } = require('../middleware/auth');
+const { resolveTopCareerMatchForList } = require('../services/topCareerFromEngine');
+
+/**
+ * Phone for counsellor list: optional `mobile_number`, else required registration field `contact_number`.
+ */
+function getStudentDisplayMobile(studentRow) {
+  if (!studentRow) return null;
+  const raw = studentRow.mobile_number ?? studentRow.contact_number ?? null;
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  return s || null;
+}
+
+function normalizePhone(value) {
+  if (value == null) return null;
+  const s = String(value).trim();
+  return s ? s : null;
+}
 
 // Helper function to compute AI insight (reuse from adminStudents)
 const computeAIInsight = (readinessStatus, riskLevel, score) => {
@@ -45,7 +63,6 @@ router.get('/', getCurrentUser, async (req, res) => {
     // Parse filter parameters
     const searchQuery = req.query.search || '';
     const statusFilter = req.query.status || 'all';
-    const readinessFilter = req.query.readiness || 'all';
     const riskFilter = req.query.risk || 'all';
     
     // Validate pagination
@@ -127,14 +144,34 @@ router.get('/', getCurrentUser, async (req, res) => {
             }
           }
         }
-        
+
+        let topCareerMatch = null;
+        if (latestAttempt && latestAttempt.status === TestStatus.COMPLETED && testAttemptId) {
+          try {
+            const interpreted = await InterpretedResult.findOne({
+              where: { test_attempt_id: testAttemptId },
+              attributes: ['riasec_report', 'career_direction']
+            });
+            if (interpreted) {
+              topCareerMatch = await resolveTopCareerMatchForList(
+                interpreted.riasec_report,
+                interpreted.career_direction
+              );
+            }
+          } catch (topCareerErr) {
+            console.warn(`⚠️ Top career match for attempt ${testAttemptId}:`, topCareerErr.message);
+          }
+        }
+
         const aiInsight = computeAIInsight(readinessStatus, riskLevel, score);
-        
+
         return {
           id: student.id,
           email: student.email || null,
           full_name: student.full_name || null,
-          mobile_number: studentData?.mobile_number || null,
+          mobile_number: getStudentDisplayMobile(studentData),
+          contact_number: normalizePhone(studentData?.contact_number),
+          parent_contact_number: normalizePhone(studentData?.parent_contact_number),
           education: studentData?.education || null,
           created_at: student.created_at ? new Date(student.created_at).toISOString() : null,
           has_completed_test: latestAttempt?.status === TestStatus.COMPLETED,
@@ -146,7 +183,8 @@ router.get('/', getCurrentUser, async (req, res) => {
           risk_level: riskLevel,
           readiness: readinessStatus,
           risk: riskLevel,
-          ai_insight: aiInsight
+          ai_insight: aiInsight,
+          top_career_match: topCareerMatch
         };
       } catch (studentError) {
         console.error(`❌ Error processing student ${student.id}:`, studentError.message);
@@ -155,6 +193,8 @@ router.get('/', getCurrentUser, async (req, res) => {
           email: student.email || null,
           full_name: student.full_name || null,
           mobile_number: null,
+          contact_number: null,
+          parent_contact_number: null,
           education: null,
           created_at: student.created_at ? new Date(student.created_at).toISOString() : null,
           has_completed_test: false,
@@ -166,7 +206,8 @@ router.get('/', getCurrentUser, async (req, res) => {
           risk_level: 'LOW',
           readiness: null,
           risk: 'LOW',
-          ai_insight: 'Student has not started the assessment yet.'
+          ai_insight: 'Student has not started the assessment yet.',
+          top_career_match: null
         };
       }
     }));
@@ -184,21 +225,6 @@ router.get('/', getCurrentUser, async (req, res) => {
         }
         if (statusFilter === 'not_started') {
           return !student.has_completed_test && student.test_status !== 'IN_PROGRESS';
-        }
-        return true;
-      });
-    }
-    
-    if (readinessFilter !== 'all') {
-      filteredStudentsList = filteredStudentsList.filter(student => {
-        if (readinessFilter === 'ready') {
-          return student.readiness_status === 'READY';
-        }
-        if (readinessFilter === 'partially_ready') {
-          return student.readiness_status === 'PARTIALLY READY';
-        }
-        if (readinessFilter === 'not_ready') {
-          return student.readiness_status === 'NOT READY';
         }
         return true;
       });

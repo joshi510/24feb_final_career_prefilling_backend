@@ -631,7 +631,7 @@ Return the JSON now:`;
       const top3Codes = sortedScores.slice(0, 3).map(item => item.code);
       report.careerPathways = calculateCareerPathways(top3Codes, { R, I, A, S, E, C });
 
-      // Store report in database if testAttemptId is provided
+      // Store in database if testAttemptId is provided
       if (testAttemptId) {
         try {
           const interpretedResult = await InterpretedResult.findOne({
@@ -647,13 +647,13 @@ Return the JSON now:`;
             }, {
               where: { id: interpretedResult.id }
             });
-            console.log(`✅ RIASEC report cached in database for attempt ${testAttemptId}`);
+            console.log(`✅ RIASEC report saved in database for attempt ${testAttemptId}`);
           } else {
-            console.warn(`⚠️ No interpreted result found for attempt ${testAttemptId}, cannot cache RIASEC report`);
+            console.warn(`⚠️ No interpreted result found for attempt ${testAttemptId}, cannot save RIASEC report`);
           }
         } catch (dbError) {
-          console.warn(`⚠️ Failed to cache RIASEC report: ${dbError.message}`);
-          // Don't fail the request if caching fails
+          console.warn(`⚠️ Failed to save RIASEC report: ${dbError.message}`);
+          // Don't fail the request if saving fails
         }
       }
       

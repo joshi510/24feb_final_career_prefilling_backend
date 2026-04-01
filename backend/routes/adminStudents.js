@@ -18,7 +18,6 @@ router.get('', getCurrentUser, requireAdmin, async (req, res) => {
     // Parse filter parameters
     const searchQuery = req.query.search || '';
     const statusFilter = req.query.status || 'all';
-    const readinessFilter = req.query.readiness || 'all';
     
     // Validate pagination parameters
     if (page < 1) {
@@ -42,10 +41,9 @@ router.get('', getCurrentUser, requireAdmin, async (req, res) => {
       ];
     }
     
-    // For status/readiness filters, we need to fetch all matching students first,
+    // For status filter, we need to fetch all matching students first,
     // then filter by computed values, then paginate
-    // Fetch all students if filters are active, otherwise use normal pagination
-    const shouldFetchAll = statusFilter !== 'all' || readinessFilter !== 'all';
+    const shouldFetchAll = statusFilter !== 'all';
     
     // Fetch students
     const students = await User.findAll({
@@ -220,6 +218,8 @@ router.get('', getCurrentUser, requireAdmin, async (req, res) => {
           email: student.email || null,
           full_name: student.full_name || null,
           mobile_number: studentProfile?.mobile_number || null,
+          contact_number: studentProfile?.contact_number || null,
+          parent_contact_number: studentProfile?.parent_contact_number || null,
           education: studentProfile?.education || null,
           created_at: student.created_at ? new Date(student.created_at).toISOString() : null,
           has_completed_test: latestAttempt ? latestAttempt.status === TestStatus.COMPLETED : false,
@@ -242,6 +242,8 @@ router.get('', getCurrentUser, requireAdmin, async (req, res) => {
           email: student.email || null,
           full_name: student.full_name || null,
           mobile_number: null,
+          contact_number: null,
+          parent_contact_number: null,
           education: null,
           created_at: student.created_at ? new Date(student.created_at).toISOString() : null,
           has_completed_test: false,
@@ -263,7 +265,7 @@ router.get('', getCurrentUser, requireAdmin, async (req, res) => {
       }
     }));
 
-    // Apply client-side filters (status and readiness) since they depend on computed values
+    // Apply client-side filters (status) since they depend on computed values
     let filteredStudentsList = studentsList;
     
     if (statusFilter !== 'all') {
@@ -281,21 +283,6 @@ router.get('', getCurrentUser, requireAdmin, async (req, res) => {
       });
     }
 
-    if (readinessFilter !== 'all') {
-      filteredStudentsList = filteredStudentsList.filter(student => {
-        if (readinessFilter === 'ready') {
-          return student.readiness_status === 'READY';
-        }
-        if (readinessFilter === 'partially_ready') {
-          return student.readiness_status === 'PARTIALLY READY';
-        }
-        if (readinessFilter === 'not_ready') {
-          return student.readiness_status === 'NOT READY';
-        }
-        return true;
-      });
-    }
-
     // Apply pagination to filtered results
     const startIndex = (page - 1) * limit;
     const endIndex = startIndex + limit;
@@ -305,7 +292,7 @@ router.get('', getCurrentUser, requireAdmin, async (req, res) => {
     // If filters are active, we need to count all filtered results
     // Otherwise, use the DB count
     let totalRecordsCount;
-    if (statusFilter !== 'all' || readinessFilter !== 'all') {
+    if (statusFilter !== 'all') {
       // For filtered results, we need to fetch all to get accurate count
       // This is a limitation - for better performance, consider caching or pre-computing
       totalRecordsCount = filteredStudentsList.length;

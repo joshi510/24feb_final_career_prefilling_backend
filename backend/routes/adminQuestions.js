@@ -5,7 +5,6 @@ const XLSX = require('xlsx');
 const { Op, Sequelize } = require('sequelize');
 const { Question, QuestionType, Section, QuestionApproval, ApprovalStatus } = require('../models');
 const { getCurrentUser, requireAdmin } = require('../middleware/auth');
-const { generateQuestions } = require('../services/geminiQuestionGenerator');
 
 // ============================================
 // EXCEL UPLOAD CONFIGURATION
@@ -176,190 +175,7 @@ router.get('/sections/list', getCurrentUser, requireAdmin, async (req, res) => {
   }
 });
 
-// GET /admin/questions/generate-ai - Generate AI questions
-// IMPORTANT: This route must be defined BEFORE /:id to avoid route conflicts
-router.post('/generate-ai', getCurrentUser, requireAdmin, async (req, res) => {
-  try {
-    const adminUser = req.user;
-    const { section_id, difficulty_level, count } = req.body;
-    
-    // Validation
-    if (!section_id) {
-      return res.status(400).json({
-        detail: 'section_id is required'
-      });
-    }
-    
-    if (!difficulty_level || !['Easy', 'Medium', 'Hard'].includes(difficulty_level)) {
-      return res.status(400).json({
-        detail: 'difficulty_level must be Easy, Medium, or Hard'
-      });
-    }
-    
-    if (!count || count < 1 || count > 10) {
-      return res.status(400).json({
-        detail: 'count must be between 1 and 10'
-      });
-    }
-    
-    // Get section details
-    const section = await Section.findByPk(section_id);
-    if (!section) {
-      return res.status(404).json({
-        detail: 'Section not found'
-      });
-    }
-    
-    // Generate questions using AI
-    console.log(`🤖 Generating ${count} AI questions for section: ${section.name} (${difficulty_level})`);
-    const { questions: aiQuestions, error } = await generateQuestions({
-      sectionName: section.name,
-      sectionDescription: section.description || '',
-      difficulty: difficulty_level,
-      count: parseInt(count)
-    });
-    
-    if (error || !aiQuestions || aiQuestions.length === 0) {
-      console.error(`❌ AI generation failed: ${error || 'No questions generated'}`);
-      console.error(`❌ Generated questions count: ${aiQuestions?.length || 0}`);
-      return res.status(500).json({
-        detail: error || 'Failed to generate questions',
-        error: process.env.NODE_ENV === 'development' ? error : undefined
-      });
-    }
-    
-    console.log(`✅ Successfully generated ${aiQuestions.length} AI questions`);
-    
-    // Get max order_index for this section
-    const maxOrder = await Question.max('order_index', {
-      where: { section_id: section_id }
-    });
-    let currentOrderIndex = maxOrder ? maxOrder + 1 : 1;
-    
-    // Save generated questions: source='AI', status='pending', is_active=false
-    const savedQuestions = [];
-    for (const aiQuestion of aiQuestions) {
-      try {
-        // Reject or convert TEXT questions: convert TEXT to LIKERT_SCALE
-        let rawQuestionType = aiQuestion.question_type ? aiQuestion.question_type.toUpperCase() : null;
-        
-        // Convert TEXT to LIKERT_SCALE (TEXT is not supported)
-        if (rawQuestionType === 'TEXT') {
-          console.log(`ℹ️ Converting TEXT question to LIKERT_SCALE: ${aiQuestion.question_text.substring(0, 50)}...`);
-          rawQuestionType = 'LIKERT_SCALE';
-        }
-        
-        // Fallback: resolve question_type with safe fallback
-        const resolvedQuestionType = (rawQuestionType === 'LIKERT_SCALE') 
-          ? 'LIKERT_SCALE' 
-          : 'MULTIPLE_CHOICE';
-        
-        // Prepare question data based on type
-        const questionData = {
-          question_text: aiQuestion.question_text,
-          question_type: resolvedQuestionType,
-          section_id: section_id,
-          difficulty_level: difficulty_level,
-          status: 'pending', // AI questions start as pending
-          source: 'AI', // AI-generated questions (explicitly set)
-          is_active: 0, // AI questions are inactive until approved
-          order_index: currentOrderIndex++,
-          created_by: adminUser.id
-        };
-        
-        if (resolvedQuestionType === 'LIKERT_SCALE') {
-          // LIKERT_SCALE: use default Likert options, no correct_answer, auto-calculate scale_value
-          questionData.options = 'A) Strongly Disagree, B) Disagree, C) Neutral, D) Agree, E) Strongly Agree';
-          questionData.correct_answer = null;
-          questionData.scale_value = calculateAutoScaleValue(aiQuestion.question_text);
-        } else {
-          // MULTIPLE_CHOICE: format options, include correct_answer, no scale_value
-          // DO NOT call options.map for LIKERT - this is MULTIPLE_CHOICE only
-          if (aiQuestion.options && Array.isArray(aiQuestion.options) && aiQuestion.options.length > 0) {
-            questionData.options = aiQuestion.options.map(opt => `${opt.label}) ${opt.text}`).join(', ');
-          } else {
-            // Fallback: if no options provided, use default MCQ options
-            questionData.options = 'A) Option A, B) Option B, C) Option C, D) Option D';
-          }
-          questionData.correct_answer = aiQuestion.correct_answer || 'C';
-          questionData.scale_value = null;
-        }
-        
-        const question = await Question.create(questionData);
-        
-        // Fetch with section info
-        const savedQuestion = await Question.findOne({
-          where: { id: question.id },
-          include: [
-            {
-              model: Section,
-              as: 'section',
-              attributes: ['id', 'name', 'order_index'],
-              required: false
-            }
-          ]
-        });
-        
-        // Parse options only for MULTIPLE_CHOICE questions
-        const optionsArray = savedQuestion.question_type === 'MULTIPLE_CHOICE' 
-          ? parseOptionsToArray(savedQuestion.options) 
-          : [];
-        
-        savedQuestions.push({
-          id: savedQuestion.id,
-          question_text: savedQuestion.question_text,
-          question_type: savedQuestion.question_type,
-          options: optionsArray,
-          options_string: savedQuestion.options || null,
-          correct_answer: savedQuestion.correct_answer || null,
-          scale_value: savedQuestion.scale_value || null,
-          section_id: savedQuestion.section_id,
-          section: savedQuestion.section ? {
-            id: savedQuestion.section.id,
-            name: savedQuestion.section.name,
-            order_index: savedQuestion.section.order_index
-          } : null,
-          difficulty_level: savedQuestion.difficulty_level || 'Medium',
-          status: savedQuestion.status || 'pending',
-          source: savedQuestion.source || 'ai',
-          is_active: savedQuestion.is_active,
-          order_index: savedQuestion.order_index,
-          created_by: savedQuestion.created_by,
-        created_at: (() => {
-          const val = savedQuestion.getDataValue ? savedQuestion.getDataValue('created_at') : (savedQuestion.dataValues?.created_at || savedQuestion.created_at);
-          return val ? new Date(val).toISOString() : null;
-        })(),
-        updated_at: (() => {
-          const val = savedQuestion.getDataValue ? savedQuestion.getDataValue('updated_at') : (savedQuestion.dataValues?.updated_at || savedQuestion.updated_at);
-          return val ? new Date(val).toISOString() : null;
-        })()
-        });
-      } catch (saveError) {
-        console.error(`Error saving AI-generated question: ${saveError.message}`);
-        // Continue with other questions
-      }
-    }
-    
-    if (savedQuestions.length === 0) {
-      return res.status(500).json({
-        detail: 'Failed to save generated questions'
-      });
-    }
-    
-    return res.status(201).json({
-      message: `Successfully generated and saved ${savedQuestions.length} question(s)`,
-      questions: savedQuestions,
-      count: savedQuestions.length
-    });
-  } catch (error) {
-    console.error(`❌ Error in generate_ai_questions: ${error.message}`);
-    console.error('❌ Error stack:', error.stack);
-    return res.status(500).json({
-      detail: 'Failed to generate AI questions',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
+// IMPORTANT: AI question generation route has been removed
 
 // ============================================
 // EXCEL UPLOAD ENDPOINT
@@ -1493,27 +1309,25 @@ router.delete('/:id', getCurrentUser, requireAdmin, async (req, res) => {
       return res.status(400).json({ detail: 'Invalid question ID' });
     }
     
-    const [updatedCount] = await Question.update(
-      {
-        status: 'inactive',
-        is_active: false
-      },
-      {
-        where: { id: questionId },
-        fields: ['status', 'is_active']
-      }
-    );
-    
-    if (updatedCount === 0) {
+    const existing = await Question.findByPk(questionId, { attributes: ['id'] });
+    if (!existing) {
       return res.status(404).json({ detail: 'Question not found' });
     }
-    
+
+    // Permanent delete. Dependent rows (answers, approvals, attempt_questions) are CASCADE.
+    await Question.destroy({ where: { id: questionId } });
+
     return res.json({
-      message: 'Question deleted successfully',
+      message: 'Question permanently deleted successfully',
       id: questionId
     });
   } catch (error) {
     console.error('❌ Error in delete_question:', error);
+    if (error?.name === 'SequelizeForeignKeyConstraintError') {
+      return res.status(409).json({
+        detail: 'Cannot delete question due to related records. Please contact support.'
+      });
+    }
     return res.status(500).json({
       detail: 'Failed to delete question',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined

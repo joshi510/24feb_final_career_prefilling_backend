@@ -19,6 +19,7 @@ const counsellorStudentsRoutes = require('./routes/counsellorStudents');
 const changePasswordRoutes = require('./routes/changePassword');
 const testAccessRoutes = require('./routes/testAccess');
 const careerPathwaysRoutes = require('./routes/careerPathways');
+const appointmentsRoutes = require('./routes/appointments');
 
 const app = express();
 
@@ -96,6 +97,7 @@ app.use('/admin/counsellors', adminCounsellorsRoutes);
 app.use('/admin/users', adminUsersRoutes);
 app.use('/test', testAccessRoutes);
 app.use('/career-pathways', careerPathwaysRoutes);
+app.use('/appointments', appointmentsRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -206,23 +208,28 @@ async function initializeDatabase() {
     const tables = await sequelize.getQueryInterface().showAllTables();
     console.log(`📊 Existing tables: ${tables.join(', ')}`);
 
-    // Seed admin user
-    const adminExists = await User.findOne({
-      where: { role: UserRole.ADMIN }
-    });
+    // Seed (or update) admin user
+    // Keep this deterministic so local/dev environments always have known credentials.
+    const ADMIN_EMAIL = 'admin@tops.com';
+    const ADMIN_PASSWORD = 'Topsadmin@2026';
 
-    if (!adminExists) {
-      // Create admin user with properly hashed password
-      const hashedPassword = await getPasswordHash('admin123');
+    const adminUser = await User.findOne({ where: { role: UserRole.ADMIN } });
+    const hashedPassword = await getPasswordHash(ADMIN_PASSWORD);
+
+    if (!adminUser) {
       await User.create({
-        email: 'admin@test.com',
+        email: ADMIN_EMAIL,
         password_hash: hashedPassword,
         full_name: 'Admin User',
         role: UserRole.ADMIN
       });
-      console.log('✅ Admin user created with hashed password');
+      console.log('✅ Admin user created');
     } else {
-      console.log('ℹ️ Admin already exists');
+      await adminUser.update({
+        email: ADMIN_EMAIL,
+        password_hash: hashedPassword
+      });
+      console.log('✅ Admin user credentials updated');
     }
 
     // Seed sections if table is empty - EXACTLY 5 sections in mandatory order

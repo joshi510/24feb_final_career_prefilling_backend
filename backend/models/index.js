@@ -13,6 +13,7 @@ const { Section } = require('./Section');
 const { SectionProgress, SectionStatus } = require('./SectionProgress');
 const { QuestionApproval, ApprovalStatus } = require('./QuestionApproval');
 const TestAttemptQuestion = require('./TestAttemptQuestion');
+const { Appointment, AppointmentStatus } = require('./Appointment');
 
 // Define associations
 User.hasOne(Student, { foreignKey: 'user_id', as: 'studentProfile' });
@@ -63,6 +64,10 @@ QuestionApproval.belongsTo(Question, { foreignKey: 'question_id', as: 'question'
 QuestionApproval.belongsTo(User, { foreignKey: 'approved_by', as: 'approver' });
 User.hasMany(QuestionApproval, { foreignKey: 'approved_by', as: 'questionApprovals' });
 
+// Appointment associations
+User.hasMany(Appointment, { foreignKey: 'student_id', as: 'appointments' });
+Appointment.belongsTo(User, { foreignKey: 'student_id', as: 'student' });
+
 module.exports = {
   User,
   UserRole,
@@ -82,6 +87,8 @@ module.exports = {
   SectionStatus,
   QuestionApproval,
   ApprovalStatus,
-  TestAttemptQuestion
+  TestAttemptQuestion,
+  Appointment,
+  AppointmentStatus
 };
 
